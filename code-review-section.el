@@ -250,7 +250,11 @@ For internal usage only.")
 (defclass code-review-commit-section (magit-section)
   ((keymap :initform 'code-review-commit-section-map)
    (sha    :initarg :sha)
-   (msg    :initarg :msg)))
+   (msg    :initarg :msg)
+   (headline :initarg :headline)
+   (body :initarg :body)))
+
+(defclass code-review-commit-check-section (magit-section) ())
 
 (defclass code-review-commit-check-detail-section (magit-section)
   ((keymap :initform 'code-review-commit-check-detail-section-map)
@@ -277,7 +281,6 @@ For internal usage only.")
         (with-slots (value) section
           (browse-url (oref value details)))
       (message "Goto check at remote not defined in this section."))))
-
 
 ;;; General Comment - Conversation
 
@@ -869,45 +872,94 @@ Optionally DELETE? flag must be set if you want to remove it."
           (let-alist c
             (let* ((sha (a-get-in c (list 'commit 'abbreviatedOid)))
                    (msg (a-get-in c (list 'commit 'message)))
-                   (obj (code-review-commit-section :sha sha :msg msg)))
+                   (headline (a-get-in c (list 'commit 'messageHeadline)))
+                   (body (a-get-in c (list 'commit 'messageBody)))
+                   (obj (code-review-commit-section :sha sha :msg msg :headline headline :body body)))
               (magit-insert-section commit-section (code-review-commit-section obj)
                 (if (and (code-review-github-repo-p pr) .commit.statusCheckRollup.contexts.nodes)
                     (progn
-                      (insert (format "%s%s %s %s"
+                      (insert (format "%s%s%s"
                                       (propertize (format "%-6s " (oref obj sha)) 'font-lock-face 'magit-hash)
-                                      (oref obj msg)
-                                      (if (string-equal .commit.statusCheckRollup.state "SUCCESS")
-                                          ":white_check_mark:"
-                                        ":x:")
-                                      (propertize "Details:" 'font-lock-face 'code-review-checker-detail-face)))
+                                      (cond
+                                       ((string-equal .commit.statusCheckRollup.state "SUCCESS")
+                                        (propertize "" 'face `(:family "github-octicons" :foreground "green")))
+                                       ((string-equal .commit.statusCheckRollup.state "FAILURE")
+                                        (propertize "" 'face `(:family "github-octicons" :foreground "red")))
+                                       (t
+                                        (propertize "" 'face `(:family "github-octicons" :foreground "orange"))))
+                                      (oref obj headline)))
+                      (insert ?\n)
                       (oset commit-section hidden t)
                       (magit-insert-heading)
-                      (dolist (check .commit.statusCheckRollup.contexts.nodes)
-                        (let-alist check
-                          (let ((obj (code-review-commit-check-detail-section :check check :details .detailsUrl)))
-                            (magit-insert-section (code-review-commit-check-detail-section obj)
-                              (if (string-equal .conclusion "SUCCESS")
-                                  (progn
-                                    (insert (propertize (format "%-7s %s / %s" "" .checkSuite.workflowRun.workflow.name .name)
-                                                        'font-lock-face 'code-review-checker-name-face))
-                                    (insert " - ")
-                                    (insert (propertize (format "%s  " (format "Successful in %s."
-                                                                               (code-review-utils--elapsed-time .completedAt .startedAt)))
-                                                        'font-lock-face 'magit-dimmed))
-                                    (insert (propertize ":white_check_mark: Details"
-                                                        'font-lock-face 'code-review-checker-detail-face)))
-                                (progn
-                                  (insert (propertize (format "%-7s %s / %s" "" .checkSuite.workflowRun.workflow.name .title)
-                                                      'font-lock-face 'code-review-checker-name-face))
-                                  (insert " - ")
-                                  (insert (propertize (format "%s  " .summary)
-                                                      'font-lock-face 'magit-dimmed))
-                                  (insert (propertize ":x: Details"
-                                                      'font-lock-face 'code-review-checker-detail-face))))))
-                          (insert "\n"))))
+                      (insert (format "\n%s"
+                                      (oref obj body)))
+                      (insert ?\n)
+                      (insert (propertize "Checks:" 'font-lock-face 'code-review-checker-detail-face))
+                      (insert ?\n)
+
+                      (let* ((workflows (make-hash-table :test 'equal)))
+                        (dolist (check .commit.statusCheckRollup.contexts.nodes)
+                          (let-alist check
+                            (let ((obj (code-review-commit-check-detail-section :check check :details .detailsUrl))
+                                  (workflow .checkSuite.workflowRun.workflow.name))
+                              (puthash workflow
+                                       (if (gethash workflow workflows)
+                                           (append (gethash workflow workflows)
+                                                   (list obj))
+                                         (list obj))
+                                       workflows))))
+
+                        (maphash (lambda (workflow checks)
+                                   (magit-insert-section section (code-review-commit-check-section)
+                                     (unless (catch 'failure
+                                               (dolist (obj checks)
+                                                 (let-alist (oref obj check)
+                                                   (if (string-equal .conclusion "FAILURE")
+                                                       (progn
+                                                         (insert (propertize "  "  'face `(:family "github-octicons" :foreground "red")))
+                                                         (throw 'failure t)))
+                                                   (if (string-equal .conclusion nil)
+                                                       (progn
+                                                         (insert (propertize "  "  'face `(:family "github-octicons" :foreground "orange")))
+                                                         (throw 'failure t))))))
+                                       (insert (propertize "  "  'face `(:family "github-octicons" :foreground "green"))))
+                                     (insert (format "%s:" workflow))
+                                     (insert ?\n)
+                                     (oset section hidden t)
+                                     (magit-insert-heading)
+                                     (dolist (obj checks)
+                                       (let-alist (oref obj check)
+                                         (magit-insert-section (code-review-commit-check-detail-section obj)
+                                           (cond
+                                            ((string-equal .conclusion "SUCCESS")
+                                             (insert (propertize "      " 'face `(:family "github-octicons" :foreground "green")))
+                                             (insert (propertize (format "%s" .name) 'font-lock-face 'magit-dimmed))
+                                             (insert " - ")
+                                             (insert (propertize (format
+                                                                  "Successful in %s."
+                                                                  (code-review-utils--elapsed-time .completedAt
+                                                                                                   .startedAt))
+                                                                 'font-lock-face 'magit-dimmed)))
+                                            ((string-equal .conclusion "FAILURE")
+                                             (insert (propertize "      " 'face `(:family "github-octicons" :foreground "red")))
+                                             (insert (propertize (format "%s" .name) 'font-lock-face 'magit-dimmed)))
+                                            ((string-equal .conclusion nil)
+                                             (insert (propertize "      " 'face `(:family "github-octicons" :foreground "orange")))
+                                             (insert (propertize (format "%s" .name) 'font-lock-face 'magit-dimmed)))
+                                            (t
+                                             (insert (propertize "      " 'face `(:family "github-octicons")))
+                                             (insert (propertize (format "%s" .name) 'font-lock-face 'magit-dimmed))))
+                                           (insert ?\n))))))
+                                 workflows))
+                      (insert "\n"))
                   (progn
-                    (insert (propertize (format "%-6s " (oref obj sha)) 'font-lock-face 'magit-hash))
-                    (insert (oref obj msg))
+                    (insert (format "%s%s"
+                                    (propertize (format "%-6s " (oref obj sha)) 'font-lock-face 'magit-hash)
+                                    (oref obj headline)))
+                    (insert ?\n)
+                    (oset commit-section hidden t)
+                    (magit-insert-heading)
+                    (insert (format "\n%s" (oref obj body)))
                     (insert ?\n)))))))
         (insert ?\n)))))
 

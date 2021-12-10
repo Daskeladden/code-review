@@ -225,9 +225,11 @@ https://github.com/wandersoncferreira/code-review#configuration"))
           commit {
             abbreviatedOid
             message
+            messageBody
+            messageHeadline
             statusCheckRollup {
               state
-              contexts(first:50){
+              contexts(last:100){
                 nodes {
                   ... on CheckRun {
                     startedAt
@@ -394,9 +396,11 @@ https://github.com/wandersoncferreira/code-review#configuration"))
           commit {
             abbreviatedOid
             message
+            messageBody
+            messageHeadline
             statusCheckRollup {
               state
-              contexts(first:50){
+              contexts(last:100){
                 nodes {
                   ... on CheckRun {
                     startedAt
