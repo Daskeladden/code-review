@@ -686,7 +686,10 @@ INDENT count of spaces are added at the start of every line."
                                                       'keymap 'code-review-commit-check-detail-section-map))))))
                           (insert "\n"))))
                   (progn
-                    (insert (propertize (format "%-6s " (oref obj sha)) 'font-lock-face 'magit-hash))
+                    (insert (format "%s%s"
+                                    (propertize (format "%-6s " (oref obj sha)) 'font-lock-face 'magit-hash)
+                                    (car (split-string (oref obj msg) "\n"))))
+                    (magit-insert-heading)
                     (insert (oref obj msg))
                     (insert ?\n)))))))
         (insert ?\n)))))
